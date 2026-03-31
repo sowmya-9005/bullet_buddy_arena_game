@@ -8,7 +8,7 @@ const scoreRoutes = require('./routes/scores');
 const app = express();
 
 app.use(cors({
-  origin: ['https://bullet-buddy-arena-game-ui.onrender.com', 'http://localhost:8080'],
+  origin: (origin, callback) => callback(null, true),
   credentials: true
 }));
 app.use(express.json());
