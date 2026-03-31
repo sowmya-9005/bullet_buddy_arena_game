@@ -7,6 +7,181 @@ import { WEAPONS, type LootData } from '@/lib/gameTypes';
 import { MAP_HALF } from '@/lib/mapData';
 import Environment from './Environment';
 
+// Sound system
+class SoundManager {
+  private audioContext: AudioContext | null = null;
+  private sounds: Map<string, AudioBuffer> = new Map();
+  private musicSource: AudioBufferSourceNode | null = null;
+  private musicGainNode: GainNode | null = null;
+
+  constructor() {
+    if (typeof window !== 'undefined') {
+      this.audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+      this.createSounds();
+      this.createBackgroundMusic();
+    }
+  }
+
+  private createSounds() {
+    if (!this.audioContext) return;
+
+    // Enhanced player shoot sound
+    const shootBuffer = this.audioContext.createBuffer(1, this.audioContext.sampleRate * 0.2, this.audioContext.sampleRate);
+    const shootData = shootBuffer.getChannelData(0);
+    for (let i = 0; i < shootData.length; i++) {
+      const t = i / this.audioContext.sampleRate;
+      // Layered gunshot sound with low frequency thump and high frequency crack
+      const lowFreq = Math.sin(2 * Math.PI * 80 * t) * Math.exp(-t * 15) * 0.4;
+      const midFreq = Math.sin(2 * Math.PI * 200 * t) * Math.exp(-t * 25) * 0.3;
+      const highFreq = (Math.random() - 0.5) * Math.exp(-t * 50) * 0.2;
+      const click = Math.sin(2 * Math.PI * 1500 * t) * Math.exp(-t * 100) * 0.1;
+      shootData[i] = lowFreq + midFreq + highFreq + click;
+    }
+    this.sounds.set('shoot', shootBuffer);
+
+    // Enhanced enemy shoot sound
+    const enemyShootBuffer = this.audioContext.createBuffer(1, this.audioContext.sampleRate * 0.25, this.audioContext.sampleRate);
+    const enemyShootData = enemyShootBuffer.getChannelData(0);
+    for (let i = 0; i < enemyShootData.length; i++) {
+      const t = i / this.audioContext.sampleRate;
+      // Deeper enemy gunshot with more bass
+      const lowFreq = Math.sin(2 * Math.PI * 60 * t) * Math.exp(-t * 12) * 0.5;
+      const midFreq = Math.sin(2 * Math.PI * 150 * t) * Math.exp(-t * 20) * 0.3;
+      const noise = (Math.random() - 0.5) * Math.exp(-t * 30) * 0.3;
+      const tail = Math.sin(2 * Math.PI * 100 * t) * Math.exp(-t * 8) * 0.2;
+      enemyShootData[i] = lowFreq + midFreq + noise + tail;
+    }
+    this.sounds.set('enemyShoot', enemyShootBuffer);
+
+    // Enhanced hit sound (getting shot)
+    const hitBuffer = this.audioContext.createBuffer(1, this.audioContext.sampleRate * 0.3, this.audioContext.sampleRate);
+    const hitData = hitBuffer.getChannelData(0);
+    for (let i = 0; i < hitData.length; i++) {
+      const t = i / this.audioContext.sampleRate;
+      // Impact sound with multiple layers
+      const impact = (Math.random() - 0.5) * Math.exp(-t * 40) * 0.4;
+      const thump = Math.sin(2 * Math.PI * 100 * t) * Math.exp(-t * 15) * 0.3;
+      const ricochet = Math.sin(2 * Math.PI * 800 * t + Math.random() * 10) * Math.exp(-t * 60) * 0.2;
+      const pain = Math.sin(2 * Math.PI * 200 * t) * Math.exp(-t * 10) * 0.2;
+      hitData[i] = impact + thump + ricochet + pain;
+    }
+    this.sounds.set('hit', hitBuffer);
+
+    // Powerup sound
+    const powerupBuffer = this.audioContext.createBuffer(1, this.audioContext.sampleRate * 0.5, this.audioContext.sampleRate);
+    const powerupData = powerupBuffer.getChannelData(0);
+    for (let i = 0; i < powerupData.length; i++) {
+      const t = i / this.audioContext.sampleRate;
+      powerupData[i] = (Math.sin(2 * Math.PI * 523.25 * t) * 0.3 + 
+                        Math.sin(2 * Math.PI * 659.25 * t) * 0.2 + 
+                        Math.sin(2 * Math.PI * 783.99 * t) * 0.1) * 
+                        Math.exp(-t * 2);
+    }
+    this.sounds.set('powerup', powerupBuffer);
+
+    // Health pickup sound
+    const healthBuffer = this.audioContext.createBuffer(1, this.audioContext.sampleRate * 0.6, this.audioContext.sampleRate);
+    const healthData = healthBuffer.getChannelData(0);
+    for (let i = 0; i < healthData.length; i++) {
+      const t = i / this.audioContext.sampleRate;
+      healthData[i] = (Math.sin(2 * Math.PI * 440 * t) * 0.25 + 
+                       Math.sin(2 * Math.PI * 554.37 * t) * 0.2 + 
+                       Math.sin(2 * Math.PI * 659.25 * t) * 0.15) * 
+                       Math.exp(-t * 1.5);
+    }
+    this.sounds.set('health', healthBuffer);
+  }
+
+  private createBackgroundMusic() {
+    if (!this.audioContext) return;
+
+    // Create a simple, calming forest ambient music loop
+    const musicBuffer = this.audioContext.createBuffer(2, this.audioContext.sampleRate * 8, this.audioContext.sampleRate);
+    
+    for (let channel = 0; channel < 2; channel++) {
+      const channelData = musicBuffer.getChannelData(channel);
+      for (let i = 0; i < channelData.length; i++) {
+        const t = i / this.audioContext.sampleRate;
+        
+        // Base ambient pad (low frequency)
+        const pad = Math.sin(2 * Math.PI * 55 * t) * 0.05 +
+                   Math.sin(2 * Math.PI * 82.41 * t) * 0.03;
+        
+        // Gentle forest melody
+        const melody = Math.sin(2 * Math.PI * 261.63 * t) * 0.02 * Math.sin(t * 0.5) + // C4
+                      Math.sin(2 * Math.PI * 329.63 * t) * 0.015 * Math.sin(t * 0.3) + // E4
+                      Math.sin(2 * Math.PI * 392 * t) * 0.01 * Math.sin(t * 0.7); // G4
+        
+        // Nature-inspired rhythm (like wind through trees)
+        const rhythm = Math.sin(2 * Math.PI * 0.5 * t) * 0.03 +
+                      Math.sin(2 * Math.PI * 0.3 * t) * 0.02;
+        
+        // Subtle bird-like high frequencies
+        const birds = Math.sin(2 * Math.PI * 1760 * t) * 0.005 * Math.sin(t * 2.3) +
+                     Math.sin(2 * Math.PI * 2093 * t) * 0.003 * Math.sin(t * 3.7);
+        
+        // Combine all elements
+        channelData[i] = (pad + melody + rhythm + birds) * 0.3;
+        
+        // Add gentle fade in at start
+        if (i < this.audioContext.sampleRate * 2) {
+          channelData[i] *= i / (this.audioContext.sampleRate * 2);
+        }
+        
+        // Add gentle fade out at end
+        if (i > musicBuffer.length - this.audioContext.sampleRate * 2) {
+          channelData[i] *= (musicBuffer.length - i) / (this.audioContext.sampleRate * 2);
+        }
+      }
+    }
+    
+    this.sounds.set('music', musicBuffer);
+    this.playBackgroundMusic();
+  }
+
+  private playBackgroundMusic() {
+    if (!this.audioContext || !this.sounds.has('music')) return;
+
+    // Stop existing music if playing
+    if (this.musicSource) {
+      this.musicSource.stop();
+    }
+
+    this.musicSource = this.audioContext.createBufferSource();
+    this.musicSource.buffer = this.sounds.get('music')!;
+    this.musicSource.loop = true;
+
+    this.musicGainNode = this.audioContext.createGain();
+    this.musicGainNode.gain.value = 0.15; // Low volume for background music
+
+    this.musicSource.connect(this.musicGainNode);
+    this.musicGainNode.connect(this.audioContext.destination);
+    this.musicSource.start();
+  }
+
+  playSound(soundName: string) {
+    if (!this.audioContext || !this.sounds.has(soundName)) return;
+
+    const source = this.audioContext.createBufferSource();
+    const buffer = this.sounds.get(soundName)!;
+    source.buffer = buffer;
+
+    const gainNode = this.audioContext.createGain();
+    gainNode.gain.value = 0.5;
+
+    source.connect(gainNode);
+    gainNode.connect(this.audioContext.destination);
+    source.start();
+  }
+
+  // Resume music context if suspended (for browser autoplay policies)
+  resumeMusic() {
+    if (this.audioContext && this.audioContext.state === 'suspended') {
+      this.audioContext.resume();
+    }
+  }
+}
+
 interface BulletData {
   id: string;
   pos: THREE.Vector3;
@@ -31,11 +206,17 @@ const BOUND = MAP_HALF - 1;
 const GameWorld = () => {
   const { camera } = useThree();
   const [, forceUpdate] = useReducer((x: number) => x + 1, 0);
+  
+  // Initialize sound manager
+  const soundManager = useRef<SoundManager | null>(null);
+  useEffect(() => {
+    soundManager.current = new SoundManager();
+  }, []);
 
   const bullets = useRef<BulletData[]>([]);
   const enemies = useRef<EnemyData[]>([]);
   const loot = useRef<LootData[]>([]);
-  const bulletMeshes = useRef(new Map<string, THREE.Mesh>());
+  const bulletMeshes = useRef(new Map<string, THREE.Group>());
   const enemyGroups = useRef(new Map<string, THREE.Group>());
   const lootGroups = useRef(new Map<string, THREE.Group>());
   const safeZoneRef = useRef<THREE.Mesh>(null);
@@ -79,6 +260,10 @@ const GameWorld = () => {
       reloadTimer.current = 0;
       zoneDmgAccum.current = 0;
       nextId = 0;
+      // Reset wave state
+      useGameStore.getState().setWave(1);
+      useGameStore.getState().setWaveEnemiesLeft(3);
+      useGameStore.getState().setWaveInProgress(false);
       forceUpdate();
     }
   }, [gameOver, started]);
@@ -93,7 +278,11 @@ const GameWorld = () => {
     const onKU = (e: KeyboardEvent) => keys.current.delete(e.code);
     const canvas = document.querySelector('canvas');
     const onClick = () => {
-      if (!('ontouchstart' in window) && !document.pointerLockElement) canvas?.requestPointerLock();
+      if (!('ontouchstart' in window) && !document.pointerLockElement) {
+        canvas?.requestPointerLock();
+        // Resume music on first user interaction (browser autoplay compliance)
+        soundManager.current?.resumeMusic();
+      }
     };
     const onMD = (e: MouseEvent) => { if (document.pointerLockElement && e.button === 0) mouseDown.current = true; };
     const onMU = (e: MouseEvent) => { if (e.button === 0) mouseDown.current = false; };
@@ -105,8 +294,25 @@ const GameWorld = () => {
     };
     const onPLC = () => { if (!document.pointerLockElement) mouseDown.current = false; };
 
+    const onESC = (e: KeyboardEvent) => {
+      if (e.code === 'Escape') {
+        e.preventDefault();
+        const store = useGameStore.getState();
+        if (store.started && !store.gameOver) {
+          if (store.paused) {
+            store.resume();
+            if (!('ontouchstart' in window)) setTimeout(() => canvas?.requestPointerLock(), 100);
+          } else {
+            store.pause();
+            document.exitPointerLock();
+          }
+        }
+      }
+    };
+
     window.addEventListener('keydown', onKD);
     window.addEventListener('keyup', onKU);
+    window.addEventListener('keydown', onESC);
     canvas?.addEventListener('click', onClick);
     document.addEventListener('mousedown', onMD);
     document.addEventListener('mouseup', onMU);
@@ -115,6 +321,7 @@ const GameWorld = () => {
     return () => {
       window.removeEventListener('keydown', onKD);
       window.removeEventListener('keyup', onKU);
+      window.removeEventListener('keydown', onESC);
       canvas?.removeEventListener('click', onClick);
       document.removeEventListener('mousedown', onMD);
       document.removeEventListener('mouseup', onMU);
@@ -125,7 +332,7 @@ const GameWorld = () => {
 
   useFrame((_, rawDelta) => {
     const store = useGameStore.getState();
-    if (!store.started || store.gameOver) return;
+    if (!store.started || store.gameOver || store.paused) return;
     const d = Math.min(rawDelta, 0.05);
     let dirty = false;
     const jp = justPressed.current;
@@ -206,6 +413,8 @@ const GameWorld = () => {
           id: `b${nextId++}`, pos: playerPos.current.clone(), dir: fwd.clone(),
           speed: wepDef.bulletSpeed, damage: wepDef.damage, age: 0, isEnemy: false,
         });
+        // Play shoot sound
+        soundManager.current?.playSound('shoot');
         dirty = true;
       }
     }
@@ -223,6 +432,8 @@ const GameWorld = () => {
           if (b.pos.distanceTo(e.pos) < 1.2) { 
             const prevHealth = e.health;
             e.health -= b.damage; 
+            // Play hit sound
+            soundManager.current?.playSound('hit');
             // Trigger hit event for visual feedback
             if (e.health <= 0 && prevHealth > 0) {
               window.dispatchEvent(new CustomEvent('enemyHit', { 
@@ -237,7 +448,12 @@ const GameWorld = () => {
           }
         }
       } else {
-        if (b.pos.distanceTo(playerPos.current) < 1) { store.damagePlayer(b.damage); return false; }
+        if (b.pos.distanceTo(playerPos.current) < 1) { 
+          store.damagePlayer(b.damage); 
+          // Play hit sound when player is hit
+          soundManager.current?.playSound('hit');
+          return false; 
+        }
       }
       return b.age < 3;
     });
@@ -264,24 +480,47 @@ const GameWorld = () => {
           id: `b${nextId++}`, pos: e.pos.clone().add(new THREE.Vector3(0, 1, 0)),
           dir, speed: 20, damage: 8, age: 0, isEnemy: true,
         });
+        // Play enemy shoot sound
+        soundManager.current?.playSound('enemyShoot');
         dirty = true;
       }
       return true;
     });
     if (enemies.current.length !== prevEC) dirty = true;
 
-    // ── SPAWN ENEMIES ──
-    spawnTimer.current -= d;
+    // ── WAVE-BASED SPAWN ──
     const szr = store.safeZoneRadius;
-    if (spawnTimer.current <= 0 && enemies.current.length < 10) {
-      spawnTimer.current = 2 + Math.random() * 3;
+    const wave = store.wave;
+    const enemiesForWave = 3 + (wave - 1) * 2;          // wave1=3, wave2=5, wave3=7 …
+    const maxAlive = Math.min(wave + 2, 8);              // cap alive at once
+    const enemyHp = 30 + (wave - 1) * 10;               // scale HP per wave
+
+    // Start wave: mark in-progress and set enemies left
+    if (!store.waveInProgress && enemies.current.length === 0) {
+      store.setWaveInProgress(true);
+      store.setWaveEnemiesLeft(enemiesForWave);
+    }
+
+    // Spawn enemies gradually while wave is in progress
+    spawnTimer.current -= d;
+    if (store.waveInProgress && spawnTimer.current <= 0 && enemies.current.length < maxAlive && store.waveEnemiesLeft > 0) {
+      spawnTimer.current = 1.5 + Math.random() * 1.5;
       const angle = Math.random() * Math.PI * 2;
       const sDist = Math.min(15 + Math.random() * 15, szr - 2);
       enemies.current.push({
         id: `e${nextId++}`,
         pos: new THREE.Vector3(Math.cos(angle) * sDist, 1, Math.sin(angle) * sDist),
-        health: 30, maxHealth: 30, shootTimer: 2 + Math.random() * 2,
+        health: enemyHp, maxHealth: enemyHp, shootTimer: 2 + Math.random() * 2,
       });
+      store.setWaveEnemiesLeft(store.waveEnemiesLeft - 1);
+      dirty = true;
+    }
+
+    // Wave complete: all spawned and all dead → advance wave after short pause
+    if (store.waveInProgress && store.waveEnemiesLeft === 0 && enemies.current.length === 0) {
+      store.setWaveInProgress(false);
+      store.setWave(wave + 1);
+      spawnTimer.current = 4; // 4s break between waves
       dirty = true;
     }
 
@@ -310,12 +549,18 @@ const GameWorld = () => {
         if (l.type === 'weapon') {
           store.addWeapon(l.weaponId!);
           store.setPickupMessage(`Picked up ${WEAPONS[l.weaponId!].name}`);
+          // Play powerup sound for weapon
+          soundManager.current?.playSound('powerup');
         } else if (l.type === 'ammo') {
           store.addAmmo(15);
           store.setPickupMessage('Picked up Ammo');
+          // Play powerup sound for ammo
+          soundManager.current?.playSound('powerup');
         } else {
           store.addHealthKit();
           store.setPickupMessage('Picked up Health Kit');
+          // Play health sound for health kit
+          soundManager.current?.playSound('health');
         }
         setTimeout(() => store.setPickupMessage(null), 2000);
         return false;
@@ -374,93 +619,224 @@ const GameWorld = () => {
     <>
       <Environment />
 
-      {/* Safe zone ring */}
+      {/* Safe zone ring - attractive and visible */}
       <mesh ref={safeZoneRef} position={[0, 0.5, 0]} rotation={[Math.PI / 2, 0, 0]}>
-        <torusGeometry args={[1, 0.015, 8, 128]} />
-        <meshBasicMaterial color="#0088ff" transparent opacity={0.7} />
+        <torusGeometry args={[1, 0.025, 12, 128]} />
+        <meshBasicMaterial color="#00ffff" transparent opacity={0.8} />
       </mesh>
 
       {/* Bullets */}
       {renderBullets.current.map((b) => (
-        <mesh key={b.id} ref={(r) => { if (r) bulletMeshes.current.set(b.id, r); else bulletMeshes.current.delete(b.id); }}>
-          <sphereGeometry args={[0.08, 6, 6]} />
-          <meshStandardMaterial
-            color={b.isEnemy ? '#ff4444' : '#00ccff'}
-            emissive={b.isEnemy ? '#ff0000' : '#0088ff'}
-            emissiveIntensity={3}
-          />
-        </mesh>
-      ))}
-
-      {/* Enemies */}
-      {renderEnemies.current.map((e) => (
-        <group key={e.id} ref={(r) => { if (r) enemyGroups.current.set(e.id, r); else enemyGroups.current.delete(e.id); }}>
-          <mesh position={[0, 0.7, 0]} castShadow>
-            <boxGeometry args={[0.7, 1.2, 0.5]} />
-            <meshStandardMaterial color="#cc2222" />
+        <group key={b.id} ref={(r) => { if (r) bulletMeshes.current.set(b.id, r); else bulletMeshes.current.delete(b.id); }} position={b.pos}>
+          {/* Core */}
+          <mesh>
+            <capsuleGeometry args={[0.04, 0.12, 4, 8]} />
+            <meshStandardMaterial color={b.isEnemy ? '#ff2200' : '#00eeff'} emissive={b.isEnemy ? '#ff0000' : '#00aaff'} emissiveIntensity={3} />
           </mesh>
-          <mesh position={[0, 1.5, 0]} castShadow>
-            <sphereGeometry args={[0.25, 8, 8]} />
-            <meshStandardMaterial color="#dd4444" />
-          </mesh>
-          <mesh position={[-0.55, 0.6, 0]} castShadow>
-            <boxGeometry args={[0.2, 0.8, 0.2]} />
-            <meshStandardMaterial color="#bb2222" />
-          </mesh>
-          <mesh position={[0.55, 0.6, 0]} castShadow>
-            <boxGeometry args={[0.2, 0.8, 0.2]} />
-            <meshStandardMaterial color="#bb2222" />
-          </mesh>
-          <mesh position={[0, 2.1, 0]}>
-            <planeGeometry args={[0.8, 0.1]} />
-            <meshBasicMaterial color="#111111" />
-          </mesh>
-          <mesh position={[-(1 - e.health / e.maxHealth) * 0.4, 2.1, 0.01]} scale={[Math.max(0.01, e.health / e.maxHealth), 1, 1]}>
-            <planeGeometry args={[0.8, 0.08]} />
-            <meshBasicMaterial color={e.health > 15 ? '#44cc44' : '#cc4444'} />
+          {/* Glow trail */}
+          <mesh>
+            <sphereGeometry args={[0.09, 6, 6]} />
+            <meshStandardMaterial color={b.isEnemy ? '#ff4400' : '#00ccff'} emissive={b.isEnemy ? '#ff2200' : '#0088ff'} emissiveIntensity={2} transparent opacity={0.35} />
           </mesh>
         </group>
       ))}
 
-      {/* Loot */}
+      {/* Enemies — armored soldier */}
+      {renderEnemies.current.map((e) => (
+        <group key={e.id} ref={(r) => { if (r) enemyGroups.current.set(e.id, r); else enemyGroups.current.delete(e.id); }}>
+          {/* Legs */}
+          <mesh position={[-0.13, 0.3, 0]} castShadow>
+            <boxGeometry args={[0.18, 0.55, 0.18]} />
+            <meshStandardMaterial color="#1a1a2e" roughness={0.6} metalness={0.3} />
+          </mesh>
+          <mesh position={[0.13, 0.3, 0]} castShadow>
+            <boxGeometry args={[0.18, 0.55, 0.18]} />
+            <meshStandardMaterial color="#1a1a2e" roughness={0.6} metalness={0.3} />
+          </mesh>
+          {/* Boots */}
+          <mesh position={[-0.13, 0.06, 0.04]} castShadow>
+            <boxGeometry args={[0.2, 0.1, 0.28]} />
+            <meshStandardMaterial color="#0d0d0d" roughness={0.8} />
+          </mesh>
+          <mesh position={[0.13, 0.06, 0.04]} castShadow>
+            <boxGeometry args={[0.2, 0.1, 0.28]} />
+            <meshStandardMaterial color="#0d0d0d" roughness={0.8} />
+          </mesh>
+          {/* Torso — armored vest */}
+          <mesh position={[0, 0.82, 0]} castShadow>
+            <boxGeometry args={[0.52, 0.58, 0.28]} />
+            <meshStandardMaterial color="#2d3a1e" roughness={0.5} metalness={0.2} />
+          </mesh>
+          {/* Chest plate */}
+          <mesh position={[0, 0.88, 0.13]} castShadow>
+            <boxGeometry args={[0.42, 0.38, 0.06]} />
+            <meshStandardMaterial color="#1a2410" roughness={0.4} metalness={0.5} />
+          </mesh>
+          {/* Shoulder pads */}
+          <mesh position={[-0.34, 0.98, 0]} castShadow>
+            <boxGeometry args={[0.14, 0.18, 0.22]} />
+            <meshStandardMaterial color="#3a4a28" roughness={0.4} metalness={0.4} />
+          </mesh>
+          <mesh position={[0.34, 0.98, 0]} castShadow>
+            <boxGeometry args={[0.14, 0.18, 0.22]} />
+            <meshStandardMaterial color="#3a4a28" roughness={0.4} metalness={0.4} />
+          </mesh>
+          {/* Arms */}
+          <mesh position={[-0.34, 0.72, 0]} castShadow>
+            <boxGeometry args={[0.14, 0.44, 0.14]} />
+            <meshStandardMaterial color="#2d3a1e" roughness={0.6} />
+          </mesh>
+          <mesh position={[0.34, 0.72, 0]} castShadow>
+            <boxGeometry args={[0.14, 0.44, 0.14]} />
+            <meshStandardMaterial color="#2d3a1e" roughness={0.6} />
+          </mesh>
+          {/* Gloves */}
+          <mesh position={[-0.34, 0.5, 0]} castShadow>
+            <boxGeometry args={[0.15, 0.12, 0.15]} />
+            <meshStandardMaterial color="#111111" roughness={0.7} />
+          </mesh>
+          <mesh position={[0.34, 0.5, 0]} castShadow>
+            <boxGeometry args={[0.15, 0.12, 0.15]} />
+            <meshStandardMaterial color="#111111" roughness={0.7} />
+          </mesh>
+          {/* Neck */}
+          <mesh position={[0, 1.14, 0]} castShadow>
+            <cylinderGeometry args={[0.1, 0.12, 0.1, 8]} />
+            <meshStandardMaterial color="#c8a882" roughness={0.8} />
+          </mesh>
+          {/* Head */}
+          <mesh position={[0, 1.32, 0]} castShadow>
+            <boxGeometry args={[0.3, 0.28, 0.28]} />
+            <meshStandardMaterial color="#c8a882" roughness={0.7} />
+          </mesh>
+          {/* Helmet */}
+          <mesh position={[0, 1.46, 0]} castShadow>
+            <boxGeometry args={[0.34, 0.18, 0.32]} />
+            <meshStandardMaterial color="#1a2410" roughness={0.4} metalness={0.5} />
+          </mesh>
+          {/* Visor */}
+          <mesh position={[0, 1.38, 0.14]} castShadow>
+            <boxGeometry args={[0.26, 0.1, 0.04]} />
+            <meshStandardMaterial color="#ff3300" emissive="#ff2200" emissiveIntensity={1.5} transparent opacity={0.85} />
+          </mesh>
+          {/* Gun */}
+          <mesh position={[0.34, 0.68, 0.18]} castShadow rotation={[0.1, 0, 0]}>
+            <boxGeometry args={[0.06, 0.08, 0.45]} />
+            <meshStandardMaterial color="#111111" roughness={0.3} metalness={0.8} />
+          </mesh>
+          {/* Gun barrel */}
+          <mesh position={[0.34, 0.68, 0.42]} castShadow rotation={[Math.PI/2, 0, 0]}>
+            <cylinderGeometry args={[0.025, 0.025, 0.12, 6]} />
+            <meshStandardMaterial color="#222222" metalness={0.9} roughness={0.2} />
+          </mesh>
+          {/* Health bar bg */}
+          <mesh position={[0, 1.75, 0]} rotation={[0, 0, 0]}>
+            <planeGeometry args={[0.5, 0.06]} />
+            <meshBasicMaterial color="#111111" transparent opacity={0.8} />
+          </mesh>
+          {/* Health bar fill */}
+          <mesh position={[-(0.5 - e.health/e.maxHealth * 0.5), 1.75, 0.001]}
+            scale={[Math.max(0.01, e.health/e.maxHealth), 1, 1]}>
+            <planeGeometry args={[0.5, 0.05]} />
+            <meshBasicMaterial color={e.health > 20 ? '#22c55e' : '#ef4444'} />
+          </mesh>
+        </group>
+      ))}
+
+      {/* Loot items */}
       {renderLoot.current.map((l) => (
         <group key={l.id} position={[l.pos[0], l.pos[1], l.pos[2]]}
           ref={(r) => { if (r) lootGroups.current.set(l.id, r); else lootGroups.current.delete(l.id); }}>
+
+          {/* Ground glow ring */}
+          <mesh rotation={[-Math.PI/2, 0, 0]} position={[0, -0.42, 0]}>
+            <ringGeometry args={[0.25, 0.45, 32]} />
+            <meshBasicMaterial color={l.type==='weapon'?'#4488ff':l.type==='ammo'?'#ffcc00':'#00ff88'} transparent opacity={0.5} side={THREE.DoubleSide} />
+          </mesh>
+
           {l.type === 'weapon' && (
-            <mesh>
-              <boxGeometry args={[0.4, 0.2, 0.7]} />
-              <meshStandardMaterial color={WEAPONS[l.weaponId!].color} emissive={WEAPONS[l.weaponId!].color} emissiveIntensity={0.8} />
-            </mesh>
-          )}
-          {l.type === 'ammo' && (
-            <mesh>
-              <boxGeometry args={[0.3, 0.2, 0.3]} />
-              <meshStandardMaterial color="#ffcc00" emissive="#ff9900" emissiveIntensity={0.6} />
-            </mesh>
-          )}
-          {l.type === 'healthkit' && (
             <group>
-              <mesh>
-                <boxGeometry args={[0.35, 0.15, 0.35]} />
-                <meshStandardMaterial color="#00ff88" emissive="#00cc66" emissiveIntensity={0.6} />
+              {/* Receiver */}
+              <mesh castShadow>
+                <boxGeometry args={[0.08, 0.14, 0.5]} />
+                <meshStandardMaterial color="#222233" metalness={0.9} roughness={0.2} />
               </mesh>
-              <mesh position={[0, 0.1, 0]}>
-                <boxGeometry args={[0.25, 0.04, 0.07]} />
-                <meshBasicMaterial color="#ffffff" />
+              {/* Stock */}
+              <mesh position={[0, 0.02, -0.28]} castShadow>
+                <boxGeometry args={[0.07, 0.1, 0.18]} />
+                <meshStandardMaterial color="#5c3d1e" roughness={0.8} />
               </mesh>
-              <mesh position={[0, 0.1, 0]}>
-                <boxGeometry args={[0.07, 0.04, 0.25]} />
-                <meshBasicMaterial color="#ffffff" />
+              {/* Barrel */}
+              <mesh position={[0, 0.02, 0.3]} castShadow>
+                <cylinderGeometry args={[0.025, 0.03, 0.22, 8]} />
+                <meshStandardMaterial color="#111111" metalness={0.95} roughness={0.1} />
+              </mesh>
+              {/* Scope */}
+              <mesh position={[0, 0.1, 0.05]} castShadow>
+                <cylinderGeometry args={[0.04, 0.04, 0.18, 8]} />
+                <meshStandardMaterial color="#1a1a1a" metalness={0.8} roughness={0.2} />
+              </mesh>
+              {/* Emissive accent */}
+              <mesh position={[0, 0, 0]}>
+                <boxGeometry args={[0.09, 0.15, 0.51]} />
+                <meshStandardMaterial color="#4488ff" emissive="#2255ff" emissiveIntensity={0.6} transparent opacity={0.15} />
               </mesh>
             </group>
           )}
-          <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.4, 0]}>
-            <ringGeometry args={[0.3, 0.5, 16]} />
-            <meshBasicMaterial
-              color={l.type === 'weapon' ? (WEAPONS[l.weaponId!]?.color || '#cc00ff') : l.type === 'ammo' ? '#ffcc00' : '#00ff88'}
-              transparent opacity={0.25} side={THREE.DoubleSide}
-            />
-          </mesh>
+
+          {l.type === 'ammo' && (
+            <group>
+              {/* Ammo box */}
+              <mesh castShadow>
+                <boxGeometry args={[0.28, 0.18, 0.22]} />
+                <meshStandardMaterial color="#4a3800" roughness={0.6} metalness={0.3} />
+              </mesh>
+              {/* Lid */}
+              <mesh position={[0, 0.1, 0]} castShadow>
+                <boxGeometry args={[0.3, 0.04, 0.24]} />
+                <meshStandardMaterial color="#5a4500" roughness={0.5} metalness={0.4} />
+              </mesh>
+              {/* Bullets sticking out */}
+              {[-0.08, 0, 0.08].map((x, i) => (
+                <mesh key={i} position={[x, 0.16, 0]} castShadow>
+                  <cylinderGeometry args={[0.025, 0.025, 0.12, 6]} />
+                  <meshStandardMaterial color="#b8860b" metalness={0.9} roughness={0.1} />
+                </mesh>
+              ))}
+              <mesh position={[0, 0, 0]}>
+                <boxGeometry args={[0.29, 0.19, 0.23]} />
+                <meshStandardMaterial color="#ffcc00" emissive="#ffaa00" emissiveIntensity={0.4} transparent opacity={0.12} />
+              </mesh>
+            </group>
+          )}
+
+          {l.type === 'healthkit' && (
+            <group>
+              {/* Kit body */}
+              <mesh castShadow>
+                <boxGeometry args={[0.36, 0.14, 0.28]} />
+                <meshStandardMaterial color="#cc0000" roughness={0.5} metalness={0.2} />
+              </mesh>
+              {/* White cross H */}
+              <mesh position={[0, 0.08, 0.01]}>
+                <boxGeometry args={[0.22, 0.05, 0.01]} />
+                <meshBasicMaterial color="#ffffff" />
+              </mesh>
+              <mesh position={[0, 0.08, 0.01]}>
+                <boxGeometry args={[0.05, 0.22, 0.01]} />
+                <meshBasicMaterial color="#ffffff" />
+              </mesh>
+              {/* Handle */}
+              <mesh position={[0, 0.12, 0]} castShadow>
+                <boxGeometry args={[0.14, 0.06, 0.06]} />
+                <meshStandardMaterial color="#880000" roughness={0.6} />
+              </mesh>
+              <mesh position={[0, 0, 0]}>
+                <boxGeometry args={[0.37, 0.15, 0.29]} />
+                <meshStandardMaterial color="#00ff88" emissive="#00ff44" emissiveIntensity={0.5} transparent opacity={0.15} />
+              </mesh>
+            </group>
+          )}
         </group>
       ))}
     </>

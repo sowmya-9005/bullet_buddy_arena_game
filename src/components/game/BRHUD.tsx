@@ -1,8 +1,13 @@
 import { useGameStore } from '@/stores/gameStore';
+import { useAuthStore } from '@/stores/authStore';
+import { scoresApi } from '@/lib/api';
 import { WEAPONS } from '@/lib/gameTypes';
 import { useEffect, useState, useRef } from 'react';
 import { playerState, minimapData } from '@/lib/inputState';
-import { BUILDINGS, MAP_HALF } from '@/lib/mapData';
+import { TREES, ROCKS, MAP_HALF } from '@/lib/mapData';
+import Scoreboard from '@/components/Scoreboard';
+import LeaderboardModal from '@/components/LeaderboardModal';
+import GameGuide from '@/components/GameGuide';
 
 interface KillFeedItem {
   id: number;
@@ -16,6 +21,7 @@ const BRHUD = () => {
   const score = useGameStore((s) => s.score);
   const gameOver = useGameStore((s) => s.gameOver);
   const started = useGameStore((s) => s.started);
+  const paused = useGameStore((s) => s.paused);
   const weapons = useGameStore((s) => s.weapons);
   const activeSlot = useGameStore((s) => s.activeSlot);
   const healthKits = useGameStore((s) => s.healthKits);
@@ -24,38 +30,48 @@ const BRHUD = () => {
   const pickupMessage = useGameStore((s) => s.pickupMessage);
   const restart = useGameStore((s) => s.restart);
   const start = useGameStore((s) => s.start);
-  
+  const resume = useGameStore((s) => s.resume);
+  const quit = useGameStore((s) => s.quit);
+
   const [killFeed, setKillFeed] = useState<KillFeedItem[]>([]);
   const [damageFlash, setDamageFlash] = useState(false);
-  const [damageDirection, setDamageDirection] = useState<'left' | 'right' | 'front' | 'back' | null>(null);
-  const [compass, setCompass] = useState(0);
+  const [damageDirection, setDamageDirection] = useState<'left'|'right'|'front'|'back'|null>(null);
   const [kills, setKills] = useState(0);
   const [timeAlive, setTimeAlive] = useState(0);
-  
+  const [scoreSubmitted, setScoreSubmitted] = useState(false);
+  const [showLeaderboard, setShowLeaderboard] = useState(false);
+  const [showGuide, setShowGuide] = useState(false);
+  const [waveAnnounce, setWaveAnnounce] = useState<number | null>(null);
+
+  const wave = useGameStore((s) => s.wave);
+  const waveInProgress = useGameStore((s) => s.waveInProgress);
+  const prevWaveRef = useRef(1);
+
   const prevHealthRef = useRef(health);
-  const prevSlotRef = useRef(activeSlot);
   const startTimeRef = useRef(Date.now());
   const minimapCanvasRef = useRef<HTMLCanvasElement>(null);
+  const scoreSubmittedRef = useRef(false);
 
-  // Update compass based on player rotation (simplified)
+  const { username, logout } = useAuthStore();
+  const isMobile = 'ontouchstart' in window;
+  const activeWep = weapons[activeSlot];
+  const wepDef = activeWep ? WEAPONS[activeWep.weaponId] : null;
+
+  const formatTime = (s: number) =>
+    `${Math.floor(s/60).toString().padStart(2,'0')}:${(s%60).toString().padStart(2,'0')}`;
+
   useEffect(() => {
-    const interval = setInterval(() => {
-      setCompass(prev => (prev + 1) % 360);
-    }, 100);
+    const interval = setInterval(() => {}, 100);
     return () => clearInterval(interval);
   }, []);
 
-  // Reset game state when starting/restarting
   useEffect(() => {
     if (started && !gameOver) {
-      setKills(0);
-      setTimeAlive(0);
-      setKillFeed([]);
+      setKills(0); setTimeAlive(0); setKillFeed([]);
       startTimeRef.current = Date.now();
     }
   }, [started, gameOver]);
 
-  // Update time alive
   useEffect(() => {
     if (started && !gameOver) {
       const interval = setInterval(() => {
@@ -65,456 +81,367 @@ const BRHUD = () => {
     }
   }, [started, gameOver]);
 
-  // Minimap drawing
   useEffect(() => {
     if (!started) return;
     const canvas = minimapCanvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext('2d')!;
-    const s = 128; // Minimap size
+    const s = 128;
     const scale = s / (MAP_HALF * 2);
-
     const toX = (wx: number) => (wx + MAP_HALF) * scale;
     const toY = (wz: number) => (wz + MAP_HALF) * scale;
-
     let raf: number;
     const draw = () => {
       ctx.clearRect(0, 0, s, s);
-
-      // Background
-      ctx.fillStyle = 'rgba(10, 20, 40, 0.9)';
-      ctx.fillRect(0, 0, s, s);
-
-      // Buildings
-      ctx.fillStyle = 'rgba(30, 30, 60, 0.8)';
-      BUILDINGS.forEach((b) => {
-        const bx = toX(b.pos[0]) - (b.size[0] * scale) / 2;
-        const by = toY(b.pos[2]) - (b.size[2] * scale) / 2;
-        ctx.fillRect(bx, by, b.size[0] * scale, b.size[2] * scale);
-      });
-
-      // Safe zone
+      ctx.fillStyle = 'rgba(5,10,25,0.92)'; ctx.fillRect(0, 0, s, s);
+      ctx.fillStyle = 'rgba(34,139,34,0.7)';
+      TREES.forEach((t) => { const tx=toX(t.pos[0])-(t.trunkRadius*scale)/2,ty=toY(t.pos[2])-(t.trunkRadius*scale)/2; ctx.fillRect(tx,ty,t.trunkRadius*scale,t.trunkRadius*scale); });
+      ctx.fillStyle = 'rgba(80,80,80,0.7)';
+      ROCKS.forEach((r) => { const rx=toX(r.pos[0])-(r.size[0]*scale)/2,ry=toY(r.pos[2])-(r.size[2]*scale)/2; ctx.fillRect(rx,ry,r.size[0]*scale,r.size[2]*scale); });
       const szr = useGameStore.getState().safeZoneRadius;
-      ctx.strokeStyle = 'rgba(255, 217, 61, 0.8)';
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.arc(s / 2, s / 2, szr * scale, 0, Math.PI * 2);
-      ctx.stroke();
-
-      // Loot
-      minimapData.loot.forEach((l) => {
-        const lx = toX(l.x);
-        const ly = toY(l.z);
-        ctx.fillStyle = l.type === 'weapon' ? '#cc00ff' : l.type === 'ammo' ? '#ffcc00' : '#00ff88';
-        ctx.fillRect(lx - 2, ly - 2, 4, 4);
-      });
-
-      // Enemies
-      ctx.fillStyle = '#ff3333';
-      minimapData.enemies.forEach((e) => {
-        ctx.fillRect(toX(e.x) - 2, toY(e.z) - 2, 4, 4);
-      });
-
-      // Player
-      const px = toX(playerState.x);
-      const py = toY(playerState.z);
-      ctx.fillStyle = '#00ffff';
-      ctx.beginPath();
-      ctx.arc(px, py, 3, 0, Math.PI * 2);
-      ctx.fill();
-
-      // Player direction
-      ctx.strokeStyle = '#00ffff';
-      ctx.lineWidth = 1.5;
-      ctx.beginPath();
-      ctx.moveTo(px, py);
-      ctx.lineTo(px + playerState.forwardX * 8, py + playerState.forwardZ * 8);
-      ctx.stroke();
-
+      ctx.strokeStyle='rgba(255,217,61,0.85)'; ctx.lineWidth=1.5;
+      ctx.beginPath(); ctx.arc(s/2,s/2,szr*scale,0,Math.PI*2); ctx.stroke();
+      minimapData.loot.forEach((l) => { ctx.fillStyle=l.type==='weapon'?'#cc00ff':l.type==='ammo'?'#ffcc00':'#00ff88'; ctx.fillRect(toX(l.x)-2,toY(l.z)-2,4,4); });
+      ctx.fillStyle='#ff3333';
+      minimapData.enemies.forEach((e) => { ctx.fillRect(toX(e.x)-2,toY(e.z)-2,4,4); });
+      const px=toX(playerState.x),py=toY(playerState.z);
+      ctx.fillStyle='#00ffff'; ctx.beginPath(); ctx.arc(px,py,3,0,Math.PI*2); ctx.fill();
+      ctx.strokeStyle='#00ffff'; ctx.lineWidth=1.5;
+      ctx.beginPath(); ctx.moveTo(px,py); ctx.lineTo(px+playerState.forwardX*8,py+playerState.forwardZ*8); ctx.stroke();
       raf = requestAnimationFrame(draw);
     };
-
     draw();
     return () => cancelAnimationFrame(raf);
   }, [started]);
 
-  // Damage flash effect
   useEffect(() => {
     if (health < prevHealthRef.current && health > 0) {
       setDamageFlash(true);
       const damage = Math.ceil(prevHealthRef.current - health);
-      
-      // Calculate damage direction (simplified - would need enemy positions in real implementation)
-      const directions: Array<'left' | 'right' | 'front' | 'back'> = ['left', 'right', 'front', 'back'];
-      const randomDirection = directions[Math.floor(Math.random() * directions.length)];
-      setDamageDirection(randomDirection);
-      
-      setKillFeed(prev => [{
-        id: Date.now(),
-        message: `-${damage} HP from ${randomDirection.toUpperCase()}`,
-        timestamp: Date.now(),
-        type: 'kill'
-      }, ...prev.slice(0, 4)]);
-      
-      setTimeout(() => {
-        setDamageFlash(false);
-        setDamageDirection(null);
-      }, 800);
+      const dirs: Array<'left'|'right'|'front'|'back'> = ['left','right','front','back'];
+      const dir = dirs[Math.floor(Math.random()*dirs.length)];
+      setDamageDirection(dir);
+      setKillFeed(prev => [{ id:Date.now(), message:`-${damage} HP`, timestamp:Date.now(), type:'kill' }, ...prev.slice(0,4)]);
+      setTimeout(() => { setDamageFlash(false); setDamageDirection(null); }, 800);
     }
     prevHealthRef.current = health;
   }, [health]);
 
-  // Handle pickup messages
   useEffect(() => {
-    if (pickupMessage) {
-      setKillFeed(prev => [{
-        id: Date.now(),
-        message: pickupMessage,
-        timestamp: Date.now(),
-        type: 'pickup'
-      }, ...prev.slice(0, 4)]);
-    }
+    if (pickupMessage) setKillFeed(prev => [{ id:Date.now(), message:pickupMessage, timestamp:Date.now(), type:'pickup' }, ...prev.slice(0,4)]);
   }, [pickupMessage]);
 
-  // Zone warnings
   useEffect(() => {
-    if (safeZoneRadius < 20) {
-      setKillFeed(prev => [{
-        id: Date.now(),
-        message: `⚠️ ZONE CLOSING: ${Math.round(safeZoneRadius)}m`,
-        timestamp: Date.now(),
-        type: 'zone'
-      }, ...prev.slice(0, 4)]);
-    }
+    if (safeZoneRadius < 20) setKillFeed(prev => [{ id:Date.now(), message:`⚠ ZONE ${Math.round(safeZoneRadius)}m`, timestamp:Date.now(), type:'zone' }, ...prev.slice(0,4)]);
   }, [safeZoneRadius]);
 
-  // Listen for enemy kills
   useEffect(() => {
-    const handleEnemyKill = (event: CustomEvent) => {
-      setKills(prev => prev + 1);
-      setKillFeed(prev => [{
-        id: Date.now(),
-        message: `🎯 ENEMY ELIMINATED (+100)`,
-        timestamp: Date.now(),
-        type: 'kill'
-      }, ...prev.slice(0, 4)]);
+    const handler = () => {
+      setKills(p => p+1);
+      setKillFeed(prev => [{ id:Date.now(), message:'🎯 ELIMINATED +100', timestamp:Date.now(), type:'kill' }, ...prev.slice(0,4)]);
     };
-
-    window.addEventListener('enemyKill', handleEnemyKill as EventListener);
-    return () => window.removeEventListener('enemyKill', handleEnemyKill as EventListener);
+    window.addEventListener('enemyKill', handler as EventListener);
+    return () => window.removeEventListener('enemyKill', handler as EventListener);
   }, []);
 
-  const isMobile = 'ontouchstart' in window;
-  const activeWep = weapons[activeSlot];
-  const wepDef = activeWep ? WEAPONS[activeWep.weaponId] : null;
+  // Wave announcement
+  useEffect(() => {
+    if (wave !== prevWaveRef.current && waveInProgress) {
+      prevWaveRef.current = wave;
+      setWaveAnnounce(wave);
+      const t = setTimeout(() => setWaveAnnounce(null), 3000);
+      return () => clearTimeout(t);
+    }
+  }, [wave, waveInProgress]);
 
-  const formatTime = (seconds: number) => {
-    const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
-    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
-  };
+  useEffect(() => {
+    if (gameOver && !scoreSubmittedRef.current) {      scoreSubmittedRef.current = true;
+      setScoreSubmitted(false);
+      scoresApi.submit(score, kills, timeAlive).catch(()=>{}).finally(()=>setScoreSubmitted(true));
+    }
+    if (!gameOver) { scoreSubmittedRef.current = false; setScoreSubmitted(false); }
+  }, [gameOver, score, kills, timeAlive]);
 
   if (!started) {
     return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center"
-        style={{ 
-          background: 'radial-gradient(ellipse at center, rgba(10,20,40,0.98) 0%, rgba(5,10,25,0.99) 100%)'
-        }}>
-        <div className="text-center">
-          <div className="mb-8">
-            <h1 className="text-6xl md:text-8xl font-black text-transparent bg-clip-text bg-gradient-to-r from-blue-400 via-purple-500 to-pink-500 mb-2 tracking-wider animate-pulse">
-              BULLET BUDDY
-            </h1>
-            <h2 className="text-4xl md:text-6xl font-black text-transparent bg-clip-text bg-gradient-to-r from-orange-400 to-red-500 tracking-widest">
-              ARENA
-            </h2>
-          </div>
-          
-          <div className="br-panel p-8 rounded-lg max-w-md mx-auto mb-8">
-            <div className="grid grid-cols-2 gap-4 text-sm text-gray-300">
-              <div className="text-left">
-                <div className="br-text-primary font-bold mb-2">CONTROLS</div>
-                <div className="space-y-1 text-xs">
-                  <div><span className="text-gray-400">MOVE:</span> <span className="text-white">WASD</span></div>
-                  <div><span className="text-gray-400">AIM:</span> <span className="text-white">MOUSE</span></div>
-                  <div><span className="text-gray-400">SHOOT:</span> <span className="text-white">CLICK</span></div>
-                  <div><span className="text-gray-400">JUMP:</span> <span className="text-white">SPACE</span></div>
-                  <div><span className="text-gray-400">SPRINT:</span> <span className="text-white">SHIFT</span></div>
-                </div>
+      <>
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 overflow-y-auto"
+          style={{ background: 'radial-gradient(ellipse at 50% 35%, rgba(10,20,55,1) 0%, rgba(4,5,18,1) 100%)' }}>
+          <div className="absolute inset-0 opacity-[0.06] pointer-events-none"
+            style={{ backgroundImage:'linear-gradient(rgba(100,200,255,0.5) 1px,transparent 1px),linear-gradient(90deg,rgba(100,200,255,0.5) 1px,transparent 1px)', backgroundSize:'50px 50px' }} />
+          <div className="absolute top-1/3 left-1/2 -translate-x-1/2 w-[600px] h-[300px] opacity-10 blur-3xl pointer-events-none rounded-full"
+            style={{ background:'radial-gradient(ellipse,rgba(100,200,255,1),transparent)' }} />
+          <div className="relative text-center w-full max-w-lg">
+            <div className="mb-6">
+              <div className="text-5xl sm:text-7xl font-black tracking-tight leading-none"
+                style={{ background:'linear-gradient(135deg,#64c8ff 0%,#a855f7 50%,#ec4899 100%)', WebkitBackgroundClip:'text', WebkitTextFillColor:'transparent', filter:'drop-shadow(0 0 30px rgba(100,200,255,0.35))' }}>
+                BULLET BUDDY
               </div>
-              <div className="text-left">
-                <div className="br-text-warning font-bold mb-2">COMBAT</div>
-                <div className="space-y-1 text-xs">
-                  <div><span className="text-gray-400">WEAPONS:</span> <span className="text-white">1/2</span></div>
-                  <div><span className="text-gray-400">RELOAD:</span> <span className="text-white">R</span></div>
-                  <div><span className="text-gray-400">HEAL:</span> <span className="text-white">H</span></div>
-                  <div><span className="text-gray-400">INVENTORY:</span> <span className="text-white">I</span></div>
-                </div>
+              <div className="text-2xl sm:text-3xl font-black tracking-[0.5em] mt-1"
+                style={{ background:'linear-gradient(135deg,#f97316,#ef4444)', WebkitBackgroundClip:'text', WebkitTextFillColor:'transparent', filter:'drop-shadow(0 0 15px rgba(249,115,22,0.4))' }}>
+                ARENA
+              </div>
+              <div className="h-0.5 w-48 mx-auto mt-3 rounded-full"
+                style={{ background:'linear-gradient(90deg,transparent,#64c8ff,#a855f7,transparent)' }} />
+            </div>
+            <div className="rounded-2xl overflow-hidden mb-5"
+              style={{ background:'linear-gradient(135deg,rgba(15,20,50,0.9),rgba(10,12,35,0.95))', border:'1px solid rgba(100,200,255,0.12)' }}>
+              <div className="h-px" style={{ background:'linear-gradient(90deg,transparent,rgba(100,200,255,0.4),transparent)' }} />
+              <div className="grid grid-cols-2 divide-x divide-white/5 p-4 sm:p-5">
+                {[
+                  { title:'🎮 CONTROLS', color:'#64c8ff', items:[['MOVE','WASD'],['AIM','MOUSE'],['SHOOT','CLICK'],['JUMP','SPACE'],['SPRINT','SHIFT']] },
+                  { title:'⚔️ COMBAT', color:'#fbbf24', items:[['WEAPONS','1 / 2'],['RELOAD','R'],['HEAL','H'],['INVENTORY','I']] },
+                ].map(({ title, color, items }) => (
+                  <div key={title} className="px-3 sm:px-4 text-left">
+                    <div className="text-xs font-black tracking-widest mb-3" style={{ color }}>{title}</div>
+                    <div className="space-y-1.5">
+                      {items.map(([k,v]) => (
+                        <div key={k} className="flex justify-between items-center">
+                          <span className="text-xs text-gray-500 tracking-wider">{k}</span>
+                          <span className="text-xs font-bold text-white px-2 py-0.5 rounded"
+                            style={{ background:'rgba(255,255,255,0.07)', border:'1px solid rgba(255,255,255,0.1)' }}>{v}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
               </div>
             </div>
-          </div>
-
-          <button
-            onClick={() => { 
-              start(); 
-              startTimeRef.current = Date.now();
-              if (!isMobile) document.querySelector('canvas')?.requestPointerLock(); 
-            }}
-            className="br-panel px-12 py-4 rounded-lg text-xl font-black text-white hover:scale-105 transition-all duration-300 border-2 border-blue-500/50"
-            style={{
-              boxShadow: '0 0 30px rgba(100, 200, 255, 0.3), inset 0 0 20px rgba(100, 200, 255, 0.1)'
-            }}
-          >
-            <span className="br-text-primary font-bold text-2xl">DEPLOY TO BATTLE</span>
-          </button>
-
-          <div className="mt-6 text-gray-500 text-sm">
-            <div className="br-text-warning animate-pulse">⚠️ SAFE ZONE SHRINKS EVERY 45s ⚠️</div>
+            <button onClick={() => {
+                const isNew = localStorage.getItem('bb_new_user') === 'true';
+                if (isNew) { setShowGuide(true); return; }
+                start(); startTimeRef.current=Date.now(); if(!isMobile) document.querySelector('canvas')?.requestPointerLock();
+              }}
+              className="w-full py-4 rounded-2xl font-black text-lg tracking-widest transition-all duration-300 hover:scale-105 mb-4"
+              style={{ background:'linear-gradient(135deg,rgba(100,200,255,0.2),rgba(168,85,247,0.2))', border:'2px solid rgba(100,200,255,0.45)', color:'#64c8ff', boxShadow:'0 0 40px rgba(100,200,255,0.2)' }}>
+              ⚡ DEPLOY TO BATTLE
+            </button>
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2 px-3 py-2 rounded-xl"
+                style={{ background:'rgba(100,200,255,0.06)', border:'1px solid rgba(100,200,255,0.12)' }}>
+                <span className="text-xs font-black" style={{ color:'#64c8ff' }}>👤 {username}</span>
+                <span className="text-gray-700">|</span>
+                <button onClick={logout} className="text-xs font-bold text-gray-600 hover:text-red-400 transition-colors tracking-wider">LOGOUT</button>
+              </div>
+              <button onClick={() => setShowLeaderboard(true)}
+                className="flex items-center gap-2 px-4 py-2 rounded-xl font-black text-xs tracking-widest transition-all hover:scale-105"
+                style={{ background:'rgba(251,191,36,0.1)', border:'1px solid rgba(251,191,36,0.3)', color:'#fbbf24', boxShadow:'0 0 20px rgba(251,191,36,0.1)' }}>
+                🏆 LEADERBOARD
+              </button>
+            </div>
+            <div className="mt-3 text-xs font-black tracking-widest animate-pulse" style={{ color:'rgba(251,191,36,0.6)' }}>
+              ⚠️ SAFE ZONE SHRINKS EVERY 45s
+            </div>
           </div>
         </div>
-      </div>
+        {showLeaderboard && <LeaderboardModal onClose={() => setShowLeaderboard(false)} />}
+        {showGuide && (
+          <GameGuide onFinish={() => {
+            setShowGuide(false);
+            start();
+            startTimeRef.current = Date.now();
+            if (!isMobile) setTimeout(() => document.querySelector('canvas')?.requestPointerLock(), 100);
+          }} />
+        )}
+      </>
     );
   }
 
   return (
-    <div className="fixed inset-0 pointer-events-none z-40 font-sans">
-      {/* Damage Flash */}
+    <div className="fixed inset-0 pointer-events-none z-40 select-none">
+
+      {/* DAMAGE FLASH */}
       {damageFlash && (
-        <div className="absolute inset-0 bg-red-500/30 damage-flash pointer-events-none z-50" />
+        <div className="absolute inset-0 pointer-events-none z-50"
+          style={{ background:'radial-gradient(ellipse at center,rgba(255,30,30,0.4) 0%,rgba(255,0,0,0.06) 70%,transparent 100%)', animation:'damage-flash 0.3s ease-out' }} />
       )}
 
-      {/* Damage Direction Indicators */}
-      {damageDirection && (
-        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 pointer-events-none z-45">
-          {/* Left indicator */}
-          {damageDirection === 'left' && (
-            <div className="absolute -left-20 top-0 w-16 h-16 flex items-center justify-center damage-indicator-left">
-              <div className="text-red-500 text-4xl font-black animate-pulse">← LEFT</div>
-            </div>
-          )}
-          
-          {/* Right indicator */}
-          {damageDirection === 'right' && (
-            <div className="absolute -right-20 top-0 w-16 h-16 flex items-center justify-center damage-indicator-right">
-              <div className="text-red-500 text-4xl font-black animate-pulse">RIGHT →</div>
-            </div>
-          )}
-          
-          {/* Front indicator */}
-          {damageDirection === 'front' && (
-            <div className="absolute top-0 left-1/2 -translate-x-1/2 -translate-y-20 w-16 h-16 flex items-center justify-center damage-indicator-front">
-              <div className="text-red-500 text-4xl font-black animate-pulse">↑ FRONT</div>
-            </div>
-          )}
-          
-          {/* Back indicator */}
-          {damageDirection === 'back' && (
-            <div className="absolute bottom-0 left-1/2 -translate-x-1/2 translate-y-20 w-16 h-16 flex items-center justify-center damage-indicator-back">
-              <div className="text-red-500 text-4xl font-black animate-pulse">↓ BACK</div>
-            </div>
-          )}
-        </div>
-      )}
+      {/* DAMAGE DIRECTION */}
+      {damageDirection==='left' && <div className="absolute left-0 top-1/2 -translate-y-1/2 w-12 h-48 pointer-events-none" style={{ background:'linear-gradient(90deg,rgba(255,30,30,0.7),transparent)', borderRight:'2px solid rgba(255,60,60,0.9)' }} />}
+      {damageDirection==='right' && <div className="absolute right-0 top-1/2 -translate-y-1/2 w-12 h-48 pointer-events-none" style={{ background:'linear-gradient(270deg,rgba(255,30,30,0.7),transparent)', borderLeft:'2px solid rgba(255,60,60,0.9)' }} />}
+      {damageDirection==='front' && <div className="absolute top-0 left-1/2 -translate-x-1/2 w-48 h-12 pointer-events-none" style={{ background:'linear-gradient(180deg,rgba(255,30,30,0.7),transparent)', borderBottom:'2px solid rgba(255,60,60,0.9)' }} />}
+      {damageDirection==='back' && <div className="absolute bottom-0 left-1/2 -translate-x-1/2 w-48 h-12 pointer-events-none" style={{ background:'linear-gradient(0deg,rgba(255,30,30,0.7),transparent)', borderTop:'2px solid rgba(255,60,60,0.9)' }} />}
 
-      {/* Crosshair */}
+      {/* CROSSHAIR */}
       <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 pointer-events-none z-30">
-        <div className="relative w-8 h-8">
-          {/* Main crosshair lines */}
-          <div className="absolute top-1/2 left-0 w-full h-0.5 -translate-y-1/2 bg-cyan-400 opacity-80" />
-          <div className="absolute left-1/2 top-0 h-full w-0.5 -translate-x-1/2 bg-cyan-400 opacity-80" />
-          <div className="absolute top-1/2 left-1/2 w-2 h-2 -translate-x-1/2 -translate-y-1/2 bg-cyan-400 rounded-full opacity-60" />
-          
-          {/* Corner brackets */}
-          <div className="absolute -top-1 -left-1 w-3 h-3 border-l-2 border-t-2 border-cyan-400 opacity-70" />
-          <div className="absolute -top-1 -right-1 w-3 h-3 border-r-2 border-t-2 border-cyan-400 opacity-70" />
-          <div className="absolute -bottom-1 -left-1 w-3 h-3 border-l-2 border-b-2 border-cyan-400 opacity-70" />
-          <div className="absolute -bottom-1 -right-1 w-3 h-3 border-r-2 border-b-2 border-cyan-400 opacity-70" />
-        </div>
+        <svg width="36" height="36" viewBox="0 0 36 36" fill="none">
+          <line x1="18" y1="2" x2="18" y2="11" stroke="rgba(0,240,200,0.9)" strokeWidth="1.5" strokeLinecap="round"/>
+          <line x1="18" y1="25" x2="18" y2="34" stroke="rgba(0,240,200,0.9)" strokeWidth="1.5" strokeLinecap="round"/>
+          <line x1="2" y1="18" x2="11" y2="18" stroke="rgba(0,240,200,0.9)" strokeWidth="1.5" strokeLinecap="round"/>
+          <line x1="25" y1="18" x2="34" y2="18" stroke="rgba(0,240,200,0.9)" strokeWidth="1.5" strokeLinecap="round"/>
+          <circle cx="18" cy="18" r="1.8" fill="rgba(0,240,200,0.85)"/>
+        </svg>
       </div>
 
-      {/* Top Left - Health & Shield */}
-      <div className="absolute top-4 left-4 space-y-2">
-        <div className="br-panel p-3 rounded-lg">
-          <div className="flex items-center gap-3">
-            <div className="flex flex-col">
-              <div className="text-xs text-gray-400 mb-1">HEALTH</div>
-              <div className="w-32 h-3 bg-gray-700 rounded-full overflow-hidden">
-                <div 
-                  className={`h-full br-health-bar transition-all duration-300 ${
-                    health <= 25 ? 'animate-pulse' : ''
-                  }`}
-                  style={{ width: `${Math.max(0, health)}%` }}
-                />
-              </div>
-              <div className="text-xs br-text-danger font-bold mt-1">{Math.ceil(health)} HP</div>
-            </div>
-            
-            <div className="w-px h-8 bg-gray-600" />
-            
-            <div className="flex flex-col">
-              <div className="text-xs text-gray-400 mb-1">SHIELD</div>
-              <div className="w-24 h-3 bg-gray-700 rounded-full overflow-hidden">
-                <div 
-                  className="h-full br-shield-bar transition-all duration-300"
-                  style={{ width: '0%' }}
-                />
-              </div>
-              <div className="text-xs br-text-primary font-bold mt-1">0 SP</div>
+      {/* TOP LEFT — HEALTH */}
+      <div className="absolute top-3 left-3 sm:top-4 sm:left-4" style={{ minWidth:165 }}>
+        <div className="rounded-xl p-3" style={{ background:'rgba(0,0,0,0.62)', border:'1px solid rgba(255,255,255,0.07)', backdropFilter:'blur(14px)' }}>
+          <div className="flex justify-between items-center mb-1.5">
+            <span className="text-[9px] font-black tracking-[0.2em]" style={{ color:'rgba(255,255,255,0.35)' }}>HEALTH</span>
+            <span className="text-sm font-black tabular-nums" style={{ color:health<=25?'#f87171':'#fff' }}>{Math.ceil(health)}</span>
+          </div>
+          <div className="h-1.5 rounded-full overflow-hidden mb-2.5" style={{ background:'rgba(255,255,255,0.07)' }}>
+            <div className="h-full rounded-full transition-all duration-300"
+              style={{ width:`${Math.max(0,health)}%`, background:health>50?'linear-gradient(90deg,#16a34a,#4ade80)':health>25?'linear-gradient(90deg,#d97706,#fbbf24)':'linear-gradient(90deg,#dc2626,#f87171)', boxShadow:health<=25?'0 0 8px rgba(248,113,113,0.8)':'0 0 5px rgba(74,222,128,0.5)' }} />
+          </div>
+          <div className="flex items-center justify-between">
+            <span className="text-[9px] font-black tracking-[0.2em]" style={{ color:'rgba(255,255,255,0.3)' }}>MEDKIT</span>
+            <div className="flex gap-1">
+              {Array.from({length:5}).map((_,i) => (
+                <div key={i} className="w-2.5 h-2.5 rounded-sm transition-all"
+                  style={{ background:i<healthKits?'#4ade80':'rgba(255,255,255,0.07)', boxShadow:i<healthKits?'0 0 4px rgba(74,222,128,0.7)':'none' }} />
+              ))}
             </div>
           </div>
         </div>
       </div>
 
-      {/* Top Center - Score & Timer */}
-      <div className="absolute top-4 left-1/2 -translate-x-1/2">
-        <div className="br-panel p-3 rounded-lg">
-          <div className="flex items-center gap-6">
-            <div className="text-center">
-              <div className="text-xs text-gray-400">SCORE</div>
-              <div className="text-2xl font-black br-text-primary">{score.toLocaleString()}</div>
-            </div>
-            <div className="w-px h-8 bg-gray-600" />
-            <div className="text-center">
-              <div className="text-xs text-gray-400">TIME</div>
-              <div className="text-2xl font-black text-white">{formatTime(timeAlive)}</div>
-            </div>
-            <div className="w-px h-8 bg-gray-600" />
-            <div className="text-center">
-              <div className="text-xs text-gray-400">KILLS</div>
-              <div className="text-2xl font-black br-text-danger">{kills}</div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Top Right - Kills */}
-      <div className="absolute top-4 right-4 w-80">
-        <div className="space-y-2">
-          {killFeed.slice(0, 5).map((item) => (
-            <div 
-              key={item.id}
-              className={`br-kill-feed p-2 rounded text-sm kill-feed-item ${
-                item.type === 'kill' ? 'br-text-danger' :
-                item.type === 'pickup' ? 'br-text-success' :
-                'br-text-warning'
-              }`}
-            >
-              {item.message}
+      {/* TOP CENTER — SCORE / TIME / KILLS / WAVE */}
+      <div className="absolute top-3 sm:top-4 left-1/2 -translate-x-1/2">
+        <div className="flex rounded-xl overflow-hidden"
+          style={{ background:'rgba(0,0,0,0.62)', border:'1px solid rgba(255,255,255,0.07)', backdropFilter:'blur(14px)' }}>
+          {[
+            { label:'SCORE', value:score.toLocaleString(), color:'#64c8ff' },
+            { label:'TIME',  value:formatTime(timeAlive),  color:'#ffffff' },
+            { label:'KILLS', value:String(kills),          color:'#f87171' },
+            { label:'WAVE',  value:String(wave),           color:'#fbbf24' },
+          ].map(({ label, value, color }, i) => (
+            <div key={label} className="px-3 sm:px-4 py-2 text-center"
+              style={{ borderLeft:i>0?'1px solid rgba(255,255,255,0.06)':'none' }}>
+              <div className="text-[9px] font-black tracking-[0.2em] mb-0.5" style={{ color:'rgba(255,255,255,0.3)' }}>{label}</div>
+              <div className="text-base sm:text-xl font-black tabular-nums" style={{ color }}>{value}</div>
             </div>
           ))}
         </div>
       </div>
 
-      {/* Bottom Left - Weapon Display */}
-      <div className="absolute bottom-4 left-4">
-        <div className="br-weapon-display p-4 rounded-lg">
+      {/* TOP RIGHT — KILL FEED */}
+      <div className="absolute top-3 sm:top-4 right-3 sm:right-4 w-44 sm:w-56 space-y-1">
+        {killFeed.slice(0,4).map((item) => (
+          <div key={item.id} className="px-2.5 py-1.5 rounded-lg text-xs font-bold kill-feed-item truncate"
+            style={{ background:'rgba(0,0,0,0.7)', backdropFilter:'blur(10px)', borderLeft:`3px solid ${item.type==='kill'?'#f87171':item.type==='pickup'?'#4ade80':'#fbbf24'}`, color:item.type==='kill'?'#fca5a5':item.type==='pickup'?'#86efac':'#fde68a' }}>
+            {item.message}
+          </div>
+        ))}
+      </div>
+
+      {/* BOTTOM LEFT — WEAPON */}
+      <div className="absolute bottom-3 sm:bottom-5 left-3 sm:left-4">
+        <div className="rounded-xl overflow-hidden" style={{ background:'rgba(0,0,0,0.68)', border:'1px solid rgba(255,255,255,0.07)', backdropFilter:'blur(14px)' }}>
           {wepDef && activeWep ? (
-            <div className="flex items-center gap-4">
-              <div>
-                <div className="text-xs text-gray-400 mb-1">WEAPON</div>
-                <div className="text-xl font-black" style={{ color: wepDef.color }}>
-                  {wepDef.name}
-                </div>
-                <div className="text-xs text-gray-500 mt-1">
-                  DMG: {wepDef.damage} • RATE: {wepDef.fireRate}s
-                </div>
+            <div className="px-3 sm:px-4 py-3">
+              <div className="text-[9px] font-black tracking-[0.2em] mb-1" style={{ color:'rgba(255,255,255,0.3)' }}>WEAPON</div>
+              <div className="text-lg sm:text-2xl font-black tracking-wide mb-2" style={{ color:wepDef.color, textShadow:`0 0 14px ${wepDef.color}55` }}>{wepDef.name}</div>
+              <div className="flex items-end gap-1.5 mb-1.5">
+                <span className="text-3xl sm:text-4xl font-black tabular-nums leading-none"
+                  style={{ color:isReloading?'#fbbf24':activeWep.ammo<=wepDef.maxAmmo*0.3?'#f87171':'#fff' }}>
+                  {isReloading?'RLD':activeWep.ammo}
+                </span>
+                {!isReloading && <span className="text-sm font-bold mb-0.5" style={{ color:'rgba(255,255,255,0.25)' }}>/ {wepDef.maxAmmo}</span>}
               </div>
-              
-              <div className="w-px h-12 bg-gray-600" />
-              
-              <div>
-                <div className="text-xs text-gray-400 mb-1">AMMO</div>
-                <div className={`text-3xl font-black ${
-                  activeWep.ammo <= wepDef.maxAmmo * 0.3 ? 'ammo-low' : ''
-                }`} style={{ color: wepDef.color }}>
-                  {isReloading ? 'RELOAD' : activeWep.ammo}
-                </div>
-                <div className="text-xs text-gray-500">
-                  / {wepDef.maxAmmo}
-                </div>
+              <div className="h-1 rounded-full overflow-hidden" style={{ background:'rgba(255,255,255,0.07)', width:110 }}>
+                <div className="h-full rounded-full transition-all duration-200"
+                  style={{ width:isReloading?'100%':`${(activeWep.ammo/wepDef.maxAmmo)*100}%`, background:isReloading?'#fbbf24':activeWep.ammo<=wepDef.maxAmmo*0.3?'#ef4444':wepDef.color }} />
               </div>
-              
-              {healthKits > 0 && (
-                <>
-                  <div className="w-px h-12 bg-gray-600" />
-                  <div>
-                    <div className="text-xs text-gray-400 mb-1">MEDKIT</div>
-                    <div className="text-2xl font-black br-text-success">×{healthKits}</div>
-                    <div className="text-xs text-gray-500">[H]</div>
-                  </div>
-                </>
-              )}
+              <div className="mt-1.5 text-[9px] tracking-widest" style={{ color:'rgba(255,255,255,0.18)' }}>
+                DMG {wepDef.damage} · RPM {Math.round(60/wepDef.fireRate)}
+              </div>
             </div>
           ) : (
-            <div className="text-gray-500">
-              <div className="text-xs text-gray-400 mb-1">WEAPON</div>
-              <div className="text-xl font-black">NO WEAPON</div>
-            </div>
+            <div className="px-4 py-3 text-sm font-black tracking-widest" style={{ color:'rgba(255,255,255,0.2)' }}>NO WEAPON</div>
           )}
         </div>
       </div>
 
-      {/* Bottom Right - Minimap & Compass */}
-      <div className="absolute bottom-4 right-4 space-y-3">
-        {/* Compass */}
-        <div className="br-compass p-3 rounded-lg w-20 h-20 flex items-center justify-center">
-          <div className="relative">
-            <div className="text-xs text-gray-400 absolute -top-6 left-1/2 -translate-x-1/2">N</div>
-            <div className="w-16 h-16 rounded-full border-2 border-gray-600 relative">
-              <div 
-                className="absolute top-1/2 left-1/2 w-0.5 h-6 bg-red-500 -translate-x-1/2 -translate-y-1/2 origin-bottom"
-                style={{ transform: `translate(-50%, -50%) rotate(${compass}deg)` }}
-              />
-            </div>
+      {/* BOTTOM RIGHT — MINIMAP */}
+      <div className="absolute bottom-3 sm:bottom-5 right-3 sm:right-4">
+        <div className="rounded-xl overflow-hidden"
+          style={{ border:'1px solid rgba(100,200,255,0.18)', boxShadow:'0 0 20px rgba(100,200,255,0.07)', background:'rgba(0,0,0,0.55)' }}>
+          <div className="flex items-center justify-between px-2 py-1"
+            style={{ background:'rgba(0,0,0,0.4)', borderBottom:'1px solid rgba(255,255,255,0.05)' }}>
+            <span className="text-[9px] font-black tracking-widest" style={{ color:'rgba(100,200,255,0.5)' }}>MAP</span>
+            <span className="text-[9px] font-black tabular-nums" style={{ color:safeZoneRadius<20?'#f87171':'#64c8ff' }}>
+              ZONE {Math.round(safeZoneRadius)}m
+            </span>
           </div>
-        </div>
-
-        {/* Minimap */}
-        <div className="br-minimap p-2 rounded-lg">
-          <canvas 
-            ref={minimapCanvasRef}
-            width={128}
-            height={128}
-            className="rounded border border-gray-700"
-          />
+          <canvas ref={minimapCanvasRef} width={128} height={128} className="block w-24 h-24 sm:w-32 sm:h-32" />
         </div>
       </div>
 
-      {/* Game Over */}
+      {/* PICKUP MESSAGE */}
+      {pickupMessage && (
+        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 mt-16 pointer-events-none">
+          <div className="px-4 py-2 rounded-xl text-xs font-black tracking-widest animate-pickup-pulse"
+            style={{ background:'rgba(0,0,0,0.75)', border:'1px solid rgba(74,222,128,0.4)', color:'#4ade80', backdropFilter:'blur(8px)' }}>
+            ✦ {pickupMessage}
+          </div>
+        </div>
+      )}
+
+      {/* WAVE ANNOUNCEMENT */}
+      {waveAnnounce !== null && (
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-40">
+          <div className="text-center" style={{ animation: 'waveAnnounce 3s ease-out forwards' }}>
+            <div className="text-xs font-black tracking-[0.4em] mb-1" style={{ color: 'rgba(251,191,36,0.7)' }}>
+              INCOMING
+            </div>
+            <div className="text-6xl sm:text-8xl font-black tracking-widest"
+              style={{ color: '#fbbf24', textShadow: '0 0 40px rgba(251,191,36,0.8), 0 0 80px rgba(251,191,36,0.4)' }}>
+              WAVE {waveAnnounce}
+            </div>
+            <div className="text-sm font-black tracking-widest mt-2" style={{ color: 'rgba(255,255,255,0.4)' }}>
+              {3 + (waveAnnounce - 1) * 2} ENEMIES
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* BETWEEN WAVES — PREP BANNER */}
+      {!waveInProgress && !gameOver && started && (
+        <div className="absolute bottom-1/3 left-1/2 -translate-x-1/2 pointer-events-none">
+          <div className="px-5 py-2 rounded-xl text-xs font-black tracking-widest"
+            style={{ background: 'rgba(0,0,0,0.7)', border: '1px solid rgba(251,191,36,0.3)', color: '#fbbf24', backdropFilter: 'blur(8px)' }}>
+            ⏳ NEXT WAVE INCOMING...
+          </div>
+        </div>
+      )}
+
+      {/* GAME OVER */}
       {gameOver && (
+        <div className="absolute inset-0 pointer-events-auto">
+          <Scoreboard currentScore={score} kills={kills} timeAlive={timeAlive} scoreSubmitted={scoreSubmitted}
+            onPlayAgain={() => { restart(); setKills(0); setTimeAlive(0); startTimeRef.current=Date.now(); if(!isMobile) setTimeout(()=>document.querySelector('canvas')?.requestPointerLock(),100); }}
+            onQuit={() => { quit(); setKills(0); setTimeAlive(0); startTimeRef.current=Date.now(); document.exitPointerLock(); }}
+          />
+        </div>
+      )}
+
+      {/* PAUSE MENU */}
+      {paused && !gameOver && (
         <div className="absolute inset-0 flex items-center justify-center pointer-events-auto"
-          style={{ background: 'radial-gradient(ellipse at center, rgba(139,0,0,0.95) 0%, rgba(0,0,0,0.98) 100%)' }}>
-          <div className="br-panel p-8 rounded-lg max-w-md text-center">
-            <h1 className="text-5xl font-black br-text-danger mb-4">GAME OVER</h1>
-            <div className="space-y-3 mb-6">
-              <div>
-                <div className="text-sm text-gray-400">FINAL SCORE</div>
-                <div className="text-3xl font-black br-text-primary">{score.toLocaleString()}</div>
-              </div>
-              <div className="flex items-center justify-center gap-4">
-                <div className="text-3xl font-black br-text-danger">⚔</div>
-                <div className="text-center">
-                  <div className="text-sm text-gray-400">ENEMIES ELIMINATED</div>
-                  <div className="text-4xl font-black br-text-danger">{kills}</div>
+          style={{ background:'rgba(0,0,0,0.72)', backdropFilter:'blur(8px)' }}>
+          <div className="w-full max-w-xs mx-4">
+            <div className="rounded-2xl overflow-hidden"
+              style={{ background:'linear-gradient(160deg,rgba(10,15,40,0.99),rgba(6,8,22,0.99))', border:'1px solid rgba(100,200,255,0.14)', boxShadow:'0 0 60px rgba(0,0,0,0.9)' }}>
+              <div className="h-0.5" style={{ background:'linear-gradient(90deg,transparent,#64c8ff,transparent)' }} />
+              <div className="p-6 text-center">
+                <div className="text-3xl font-black tracking-[0.3em] mb-1" style={{ color:'#64c8ff', textShadow:'0 0 20px rgba(100,200,255,0.4)' }}>PAUSED</div>
+                <div className="text-[10px] tracking-[0.3em] mb-6" style={{ color:'rgba(255,255,255,0.2)' }}>GAME IS PAUSED</div>
+                <div className="space-y-2.5">
+                  <button onClick={() => { resume(); if(!isMobile) setTimeout(()=>document.querySelector('canvas')?.requestPointerLock(),100); }}
+                    className="w-full py-3 rounded-xl font-black text-sm tracking-widest transition-all hover:scale-105"
+                    style={{ background:'rgba(74,222,128,0.12)', border:'1px solid rgba(74,222,128,0.3)', color:'#4ade80' }}>
+                    ▶ RESUME
+                  </button>
+                  <button onClick={() => { quit(); setKills(0); setTimeAlive(0); startTimeRef.current=Date.now(); document.exitPointerLock(); }}
+                    className="w-full py-3 rounded-xl font-black text-sm tracking-widest transition-all hover:scale-105"
+                    style={{ background:'rgba(239,68,68,0.1)', border:'1px solid rgba(239,68,68,0.28)', color:'#f87171' }}>
+                    ✕ QUIT TO MENU
+                  </button>
                 </div>
-              </div>
-              <div>
-                <div className="text-sm text-gray-400">SURVIVAL TIME</div>
-                <div className="text-2xl font-black text-white">{formatTime(timeAlive)}</div>
+                <div className="mt-4 text-[10px] tracking-[0.25em]" style={{ color:'rgba(255,255,255,0.18)' }}>ESC TO RESUME</div>
               </div>
             </div>
-            <button
-              onClick={() => { 
-                restart(); 
-                setKills(0);
-                setTimeAlive(0);
-                startTimeRef.current = Date.now();
-                if (!isMobile) setTimeout(() => document.querySelector('canvas')?.requestPointerLock(), 100); 
-              }}
-              className="w-full br-panel p-4 rounded-lg text-xl font-black br-text-primary hover:scale-105 transition-all duration-300 border-2 border-blue-500/50"
-            >
-              PLAY AGAIN
-            </button>
           </div>
         </div>
       )}

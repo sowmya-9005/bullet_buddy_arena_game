@@ -6,6 +6,7 @@ interface GameStore {
   score: number;
   gameOver: boolean;
   started: boolean;
+  paused: boolean;
   weapons: (InventoryWeapon | null)[];
   activeSlot: number;
   healthKits: number;
@@ -13,6 +14,12 @@ interface GameStore {
   safeZoneRadius: number;
   inventoryOpen: boolean;
   pickupMessage: string | null;
+  wave: number;
+  waveEnemiesLeft: number;
+  waveInProgress: boolean;
+  setWave: (wave: number) => void;
+  setWaveEnemiesLeft: (n: number) => void;
+  setWaveInProgress: (v: boolean) => void;
   damagePlayer: (dmg: number) => void;
   useAmmo: () => boolean;
   startReload: () => void;
@@ -20,6 +27,9 @@ interface GameStore {
   addScore: (pts: number) => void;
   restart: () => void;
   start: () => void;
+  pause: () => void;
+  resume: () => void;
+  quit: () => void;
   switchWeapon: (slot: number) => void;
   addWeapon: (weaponId: string) => void;
   addAmmo: (amount: number) => void;
@@ -41,6 +51,10 @@ const INITIAL_STATE = {
   safeZoneRadius: 48,
   inventoryOpen: false,
   pickupMessage: null,
+  paused: false,
+  wave: 1,
+  waveEnemiesLeft: 3,
+  waveInProgress: false,
 };
 
 export const useGameStore = create<GameStore>((set, get) => ({
@@ -83,6 +97,12 @@ export const useGameStore = create<GameStore>((set, get) => ({
   restart: () => set({ ...INITIAL_STATE, weapons: [{ weaponId: 'pistol', ammo: 15 }, null] }),
 
   start: () => set({ started: true }),
+
+  pause: () => set({ paused: true }),
+
+  resume: () => set({ paused: false }),
+
+  quit: () => set({ started: false, paused: false, ...INITIAL_STATE, weapons: [{ weaponId: 'pistol', ammo: 15 }, null] }),
 
   switchWeapon: (slot) =>
     set((s) => {
@@ -128,4 +148,8 @@ export const useGameStore = create<GameStore>((set, get) => ({
   setPickupMessage: (msg) => set({ pickupMessage: msg }),
 
   setSafeZoneRadius: (r) => set({ safeZoneRadius: r }),
+
+  setWave: (wave) => set({ wave }),
+  setWaveEnemiesLeft: (n) => set({ waveEnemiesLeft: n }),
+  setWaveInProgress: (v) => set({ waveInProgress: v }),
 }));

@@ -576,3 +576,11 @@ All colors MUST be HSL.
     opacity: 1;
   }
 }
+
+@keyframes waveAnnounce {
+  0%   { opacity: 0; transform: scale(0.7); }
+  15%  { opacity: 1; transform: scale(1.05); }
+  30%  { transform: scale(1); }
+  70%  { opacity: 1; transform: scale(1); }
+  100% { opacity: 0; transform: scale(1.1); }
+}
