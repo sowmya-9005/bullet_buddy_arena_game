@@ -5,16 +5,16 @@ services:
     runtime: node
     rootDir: server
     buildCommand: npm install
-    startCommand: node index.js
+    startCommand: npm start
     envVars:
       - key: MONGO_URI
-        sync: false        # set this manually in Render dashboard
+        sync: false
       - key: JWT_SECRET
-        sync: false        # set this manually in Render dashboard
+        sync: false
       - key: PORT
-        value: 5000
+        value: 10000
       - key: FRONTEND_URL
-        sync: false        # set to your frontend URL e.g. https://bullet-buddy-arena.onrender.com
+        sync: false
 
   # Frontend — Vite React (static site)
   - type: static
@@ -24,7 +24,7 @@ services:
     staticPublishPath: dist
     envVars:
       - key: VITE_API_URL
-        sync: false        # set to your backend URL e.g. https://bullet-buddy-api.onrender.com/api
+        sync: false
     routes:
       - type: rewrite
         source: /*
